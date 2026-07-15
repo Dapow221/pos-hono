@@ -13,7 +13,7 @@ ssh <user>@<VPS_IP> 'sudo mkdir -p /opt/pos-hono && sudo chown $USER /opt/pos-ho
 From the project root on your laptop:
 
 ```sh
-rsync -av --exclude node_modules --exclude .env --exclude .git \
+rsync -av --exclude node_modules --exclude .env --exclude .git --exclude .bun \
   ./ <user>@<VPS_IP>:/opt/pos-hono/
 ```
 

@@ -9,9 +9,13 @@ set -euo pipefail
 
 APP_DIR=/opt/pos-hono
 APP_USER=pos
+# Home for the pos user: bun's install cache lands here, not in the app tree.
+VAR_DIR=/var/lib/pos-hono
 DB_NAME=pos_hono
 DB_USER=pos
 PORT="${PORT:-3000}"
+# Whoever invoked sudo owns the sources, so plain rsync deploys keep working.
+DEPLOY_USER="${SUDO_USER:-root}"
 
 if [[ $EUID -ne 0 ]]; then
   echo "Run this with sudo: sudo bash deploy/setup-vps.sh" >&2
@@ -69,14 +73,21 @@ COOKIE_SECURE=false
 CORS_ORIGINS=http://localhost:3000
 EOF
 fi
-chown -R "$APP_USER:$APP_USER" "$APP_DIR"
-chmod 600 "$APP_DIR/.env"
+echo "==> Fixing ownership (sources: $DEPLOY_USER, runtime dirs: $APP_USER)"
+mkdir -p "$VAR_DIR"
+chown -R "$APP_USER:$APP_USER" "$VAR_DIR"
+rm -rf "$APP_DIR/.bun" # bun cache from older script versions; now lives in VAR_DIR
+chown -R "$DEPLOY_USER" "$APP_DIR"
+chown "root:$APP_USER" "$APP_DIR/.env"
+chmod 640 "$APP_DIR/.env" # readable by the service user, not by others
+mkdir -p "$APP_DIR/node_modules"
+chown -R "$APP_USER:$APP_USER" "$APP_DIR/node_modules"
 
 echo "==> Installing dependencies"
-sudo -u "$APP_USER" HOME="$APP_DIR" /usr/local/bin/bun install --frozen-lockfile --production --cwd "$APP_DIR"
+sudo -u "$APP_USER" HOME="$VAR_DIR" /usr/local/bin/bun install --frozen-lockfile --production --cwd "$APP_DIR"
 
 echo "==> Running migration + seed (idempotent)"
-(cd "$APP_DIR" && sudo -u "$APP_USER" HOME="$APP_DIR" /usr/local/bin/bun run src/migrate.ts)
+(cd "$APP_DIR" && sudo -u "$APP_USER" HOME="$VAR_DIR" /usr/local/bin/bun run src/migrate.ts)
 
 echo "==> Installing systemd service"
 cp "$APP_DIR/deploy/pos-hono.service" /etc/systemd/system/pos-hono.service
