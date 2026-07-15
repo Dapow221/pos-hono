@@ -46,6 +46,8 @@ else
 fi
 sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" | grep -q 1 \
   || sudo -u postgres createdb -O "$DB_USER" "$DB_NAME"
+# gen_random_uuid() is built in from PG13; on older versions it comes from pgcrypto.
+sudo -u postgres psql -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS pgcrypto"
 
 echo "==> Writing $APP_DIR/.env (kept if it already exists)"
 if [[ ! -f "$APP_DIR/.env" ]]; then
