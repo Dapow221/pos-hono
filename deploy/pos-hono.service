@@ -1,0 +1,23 @@
+[Unit]
+Description=pos-hono POS REST API (Bun + Hono)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pos
+Group=pos
+WorkingDirectory=/opt/pos-hono
+EnvironmentFile=/opt/pos-hono/.env
+ExecStart=/usr/local/bin/bun run src/index.ts
+Restart=on-failure
+RestartSec=2
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
