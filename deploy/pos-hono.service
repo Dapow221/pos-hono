@@ -1,6 +1,6 @@
 [Unit]
 Description=pos-hono POS REST API (Bun + Hono)
-After=network-online.target postgresql.service
+After=network-online.target postgresql.service redis-server.service
 Wants=network-online.target
 
 [Service]

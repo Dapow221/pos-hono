@@ -1,6 +1,7 @@
 /** Report routes — thin controllers: guard → parse range → query service → respond. */
 import { Hono } from "hono";
 import { requirePermission, type AuthEnv } from "../middleware/auth";
+import { reportsCache } from "../middleware/cache";
 import { PERMISSIONS } from "../auth/rbac";
 import { reportRangeSchema } from "../schemas";
 import {
@@ -19,6 +20,8 @@ const route = new Hono<AuthEnv>();
 
 // Every report endpoint requires reports:read (admin).
 route.use("*", requirePermission(PERMISSIONS.REPORTS_READ));
+// Cache AFTER the guard, so only authorized responses are served or stored.
+route.use("*", reportsCache());
 
 function parseRange(query: Record<string, string | undefined>): ReportRange {
   return resolveRange(reportRangeSchema.parse({ from: query.from, to: query.to }));

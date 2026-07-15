@@ -293,6 +293,11 @@ Endpoint yang berbasis rentang tanggal nerima query opsional `from` dan `to`
 > bukan timezone server. Jadi "penjualan hari ini" ya bener-bener hari ini
 > versi toko. Timezone-nya ikut kebawa di `meta.timezone`.
 
+> Soal cache: semua response reports di-cache di **Redis** (maks 5 menit), dan
+> otomatis di-invalidate tiap ada checkout baru atau perubahan produk — jadi
+> datanya nggak pernah basi. Cek header `X-Cache: HIT/MISS` buat liat kerjanya.
+> Kalau Redis-nya mati, endpoint tetap jalan normal (langsung ke Postgres).
+
 ### GET `/v1/reports/summary?from&to`
 Angka-angka utama buat kartu di atas dashboard.
 ```json

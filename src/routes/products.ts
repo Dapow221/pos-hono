@@ -5,6 +5,7 @@ import { Errors } from "../errors";
 import { requirePermission, type AuthEnv } from "../middleware/auth";
 import { PERMISSIONS } from "../auth/rbac";
 import { createProductSchema, updateProductSchema } from "../schemas";
+import { bumpReportsCacheVersion } from "../cache";
 
 const route = new Hono<AuthEnv>();
 
@@ -38,6 +39,7 @@ route.post("/", requirePermission(PERMISSIONS.PRODUCTS_WRITE), async (c) => {
      RETURNING id, sku, name, price, stock`,
     [input.id, input.sku, input.name, input.price, input.stock],
   );
+  await bumpReportsCacheVersion(); // stock changes feed the low-stock report
   return c.json({ data: rows[0] }, 201, { Location: `/v1/products/${input.id}` });
 });
 
@@ -58,6 +60,7 @@ route.patch("/:id", requirePermission(PERMISSIONS.PRODUCTS_WRITE), async (c) => 
     [id, ...values],
   );
   if (rows.length === 0) throw Errors.notFound(`Product ${id} not found.`);
+  await bumpReportsCacheVersion();
   return c.json({ data: rows[0] });
 });
 

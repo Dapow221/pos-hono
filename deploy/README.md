@@ -45,6 +45,18 @@ curl http://<VPS_IP>:3000/health   # → {"status":"ok"}
 - **Set `CORS_ORIGINS`** in `/opt/pos-hono/.env` to your real frontend origin, then `sudo systemctl restart pos-hono`.
 - **Add a domain + HTTPS before production.** On plain HTTP the refresh-token cookie runs with `COOKIE_SECURE=false`, which is not safe on the open internet. When you get a domain: point DNS at the VPS, put Caddy or nginx in front with TLS, set `COOKIE_SECURE=true`, and restart.
 
+## Demo data (optional)
+
+Seed ~300 realistic demo transactions (spread over the last 45 days) so the
+dashboard has something to show. Idempotent; doesn't touch current stock:
+
+```sh
+cd /opt/pos-hono && sudo -u pos HOME=/var/lib/pos-hono /usr/local/bin/bun run seed:demo
+```
+
+Remove them later with:
+`DELETE FROM transactions WHERE idempotency_key LIKE 'demo-%';`
+
 ## Day-2 operations
 
 ```sh

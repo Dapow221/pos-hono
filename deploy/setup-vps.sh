@@ -28,8 +28,19 @@ fi
 
 echo "==> Installing system packages (PostgreSQL, curl, unzip)"
 apt-get update -qq
-apt-get install -y -qq postgresql curl unzip ca-certificates
+apt-get install -y -qq postgresql curl unzip ca-certificates gnupg lsb-release
 systemctl enable --now postgresql
+
+echo "==> Installing Redis (official repo — distro Redis 5 is too old for Bun's client)"
+if ! command -v redis-server >/dev/null; then
+  curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+  chmod 644 /usr/share/keyrings/redis-archive-keyring.gpg
+  echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" \
+    > /etc/apt/sources.list.d/redis.list
+  apt-get update -qq
+  apt-get install -y -qq redis
+fi
+systemctl enable --now redis-server
 
 echo "==> Installing Bun (system-wide) if missing"
 if ! command -v /usr/local/bin/bun >/dev/null; then
@@ -64,6 +75,7 @@ if [[ ! -f "$APP_DIR/.env" ]]; then
 PORT=$PORT
 NODE_ENV=production
 DATABASE_URL=postgres://$DB_USER:$DB_PASS@localhost:5432/$DB_NAME
+REDIS_URL=redis://localhost:6379
 JWT_SECRET=$(openssl rand -hex 32)
 ACCESS_TOKEN_TTL_MIN=15
 REFRESH_TOKEN_TTL_DAYS=30

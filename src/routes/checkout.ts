@@ -2,6 +2,7 @@
 import { Hono } from "hono";
 import { checkoutSchema } from "../schemas";
 import { processCheckout } from "../services/checkout";
+import { bumpReportsCacheVersion } from "../cache";
 import { Errors } from "../errors";
 import { requirePermission, type AuthEnv } from "../middleware/auth";
 import { PERMISSIONS } from "../auth/rbac";
@@ -25,6 +26,9 @@ route.post("/", requirePermission(PERMISSIONS.CHECKOUT_CREATE), async (c) => {
   const input = { ...checkoutSchema.parse(body), cashierId: c.get("user").sub };
 
   const { transaction, isReplay } = await processCheckout(input, idempotencyKey);
+
+  // A new sale changes every report; a replay changes nothing.
+  if (!isReplay) await bumpReportsCacheVersion();
 
   c.header("Idempotent-Replay", String(isReplay));
   // 201 Created for a new sale, 200 OK when we replayed an existing one.

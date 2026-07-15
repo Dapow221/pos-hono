@@ -12,6 +12,9 @@ const envSchema = z.object({
   // Local Postgres detected on :5432 as user "dapoow" with no password.
   DATABASE_URL: z.string().url().default("postgres://dapoow@localhost:5432/pos_hono"),
 
+  // Redis backs the report cache. The app runs fine (uncached) if it's down.
+  REDIS_URL: z.string().url().default("redis://localhost:6379"),
+
   // Auth. JWT_SECRET is required and must be long enough to be safe for HS256.
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters."),
   ACCESS_TOKEN_TTL_MIN: z.coerce.number().int().positive().max(15).default(15),

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun run --hot src/index.ts",
     "start": "bun run src/index.ts",
-    "seed": "bun run src/seed.ts",
+    "seed:demo": "bun run src/seed-demo.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
