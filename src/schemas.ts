@@ -89,3 +89,13 @@ export const updateProductSchema = z
 
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 export type UpdateProductInput = z.infer<typeof updateProductSchema>;
+
+// ─── Reports ────────────────────────────────────────────────────────────────
+
+/** Date-range query params. Defaults (last 30 days) are applied in the service. */
+export const reportRangeSchema = z.object({
+  from: z.iso.date().optional(),
+  to: z.iso.date().optional(),
+});
+
+export type ReportRangeInput = z.infer<typeof reportRangeSchema>;

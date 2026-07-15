@@ -282,7 +282,69 @@ Contoh error stok kurang (`409`):
 
 ---
 
-## 7. Catatan keamanan & desain (biar kebayang alasannya)
+## 7. Endpoint Reports (buat dashboard) 🔒 butuh `reports:read` (cuma admin)
+
+Semua endpoint di bawah ini read-only, khusus buat nyuplai data dashboard.
+Endpoint yang berbasis rentang tanggal nerima query opsional `from` dan `to`
+(format `YYYY-MM-DD`, dua-duanya inklusif). Kalau nggak diisi, default-nya
+**30 hari terakhir**. Rentangnya dibatasi maksimal 366 hari.
+
+> Soal "hari": transaksi dikelompokkan per tanggal **Asia/Jakarta** (WIB),
+> bukan timezone server. Jadi "penjualan hari ini" ya bener-bener hari ini
+> versi toko. Timezone-nya ikut kebawa di `meta.timezone`.
+
+### GET `/v1/reports/summary?from&to`
+Angka-angka utama buat kartu di atas dashboard.
+```json
+{
+  "data": {
+    "transactions": 11, "grossRevenue": 237400, "itemsSold": 17,
+    "discountTotal": 12200, "taxTotal": 23518, "averageTicket": 21582
+  },
+  "meta": { "from": "2026-06-16", "to": "2026-07-15", "timezone": "Asia/Jakarta" }
+}
+```
+
+### GET `/v1/reports/sales-by-day?from&to`
+Deret harian buat grafik. Hari yang nggak ada penjualan tetap muncul dengan
+angka nol, jadi grafiknya nggak bolong.
+```json
+{ "data": [{ "date": "2026-07-13", "transactions": 6, "revenue": 129800 }], "meta": { "...": "..." } }
+```
+
+### GET `/v1/reports/top-products?from&to&limit`
+Produk terlaris, diurutkan dari revenue terbesar. `limit` default 10, maks 100.
+```json
+{ "data": [{ "productId": "p_kopi", "sku": "BVG-001", "name": "Kopi Susu", "quantitySold": 7, "revenue": 126000 }] }
+```
+
+### GET `/v1/reports/payment-methods?from&to`
+Rincian metode bayar (cash/card/qris): jumlah pembayaran + totalnya.
+```json
+{ "data": [{ "method": "cash", "payments": 11, "amount": 395000 }] }
+```
+
+### GET `/v1/reports/low-stock?threshold&limit`
+Produk yang stoknya udah di bawah/sama dengan `threshold` (default 10) —
+buat alert restock. Nggak pakai rentang tanggal.
+```json
+{ "data": [{ "id": "p_teh", "sku": "BVG-002", "name": "Teh Manis", "stock": 0 }], "meta": { "threshold": 10, "count": 1 } }
+```
+
+### GET `/v1/reports/recent-transactions?limit`
+Transaksi terbaru buat feed aktivitas di dashboard. `limit` default 10, maks 50.
+```json
+{ "data": [{ "id": "…", "receiptNo": "RCP-…", "cashierId": "…", "grandTotal": 3900, "itemCount": 1, "createdAt": "2026-07-13T12:49:35.659Z" }] }
+```
+
+| Error | Kapan munculnya |
+|-------|-----------------|
+| 400 | format tanggal salah, `from` > `to`, atau rentangnya lebih dari 366 hari |
+| 403 | role-nya nggak punya izin reports:read (contoh: kasir) |
+
+---
+
+## 8. Catatan keamanan & desain (biar kebayang alasannya)
 
 - **Anti oversell**: pas checkout, stok dikunci pakai `SELECT ... FOR UPDATE` di
   dalam satu transaksi DB. Jadi kalau dua kasir rebutan stok terakhir bareng,
