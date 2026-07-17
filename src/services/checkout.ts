@@ -1,5 +1,6 @@
 import { withTransaction, type Tx } from "../db";
 import { Errors } from "../errors";
+import { recordSaleMovements } from "./inventory";
 import {
   TAX_RATE_PERCENT,
   ROUNDING_STEP,
@@ -61,6 +62,13 @@ export async function processCheckout(
       payments: input.payments,
       amountPaid,
       change,
+    });
+
+    // Same transaction as the stock cut, so the kartu stok always reconciles.
+    await recordSaleMovements(tx, {
+      lines: cart.lines,
+      receiptNo: transaction.receiptNo,
+      cashierId: input.cashierId ?? null,
     });
 
     return { transaction, isReplay: false };

@@ -16,6 +16,8 @@ import checkoutRoute from "./routes/checkout";
 import paymentsRoute from "./routes/payments";
 import reportsRoute from "./routes/reports";
 import usersRoute from "./routes/users";
+import inventoryRoute from "./routes/inventory";
+import expensesRoute from "./routes/expenses";
 
 const app = new Hono();
 
@@ -31,6 +33,8 @@ app.route("/v1/checkout", checkoutRoute);
 app.route("/v1/payments", paymentsRoute);
 app.route("/v1/reports", reportsRoute);
 app.route("/v1/users", usersRoute);
+app.route("/v1/inventory", inventoryRoute);
+app.route("/v1/expenses", expensesRoute);
 
 app.onError((err, c) => {
   if (err instanceof AppError) {

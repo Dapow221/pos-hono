@@ -613,7 +613,88 @@ user milih namanya → `POST /v1/auth/pin-login` → token baru buat kasir itu.
 
 ---
 
-## 10. Catatan keamanan & desain (biar kebayang alasannya)
+## 10. Endpoint Inventory — barang masuk, stock opname, kartu stok 🔒 butuh `products:write` (cuma admin)
+
+Semua mutasi stok di sini ngunci baris produk (`SELECT ... FOR UPDATE`),
+ngubah stok, dan nyatet baris **kartu stok** (`stock_movements`, quantity
+bertanda: penjualan/barang rusak = minus) di transaksi DB yang sama — jadi
+ledger selalu bisa direkonsiliasi sama stok. Penjualan dari checkout juga
+otomatis kecatat di ledger.
+
+### POST `/v1/inventory/goods-in`
+Barang masuk dari supplier.
+```json
+{
+  "items": [{ "productId": "p_kopi", "quantity": 24, "unitCost": 9000 }],
+  "supplier": "CV Kopi Nusantara",
+  "note": "PO-0093"
+}
+```
+Balikannya `201` → stok terbaru per produk. `unitCost`/`supplier`/`note` opsional.
+
+### POST `/v1/inventory/opname`
+Stock opname: kirim hasil hitung fisik, server ngitung selisihnya. Produk yang
+cocok nggak disentuh; yang beda di-set ke angka hitungan + kecatat di ledger.
+```json
+{ "counts": [{ "productId": "p_air", "counted": 196 }], "note": "opname malam" }
+```
+Balikannya `201` → laporan selisih:
+```json
+{
+  "data": [{ "productId": "p_air", "name": "Air Mineral", "systemStock": 198, "counted": 196, "difference": -2 }],
+  "meta": { "counted": 1, "adjusted": 1 }
+}
+```
+
+### POST `/v1/inventory/adjustment`
+Koreksi manual (barang pecah, rusak, nemu stok): quantity bertanda + alasan wajib.
+```json
+{ "productId": "p_teh", "quantity": -3, "reason": "Botol pecah" }
+```
+Balikannya `201` → stok terbaru. `400` kalau bikin stok jadi minus.
+
+### GET `/v1/inventory/movements?productId&type&from&to&limit&offset`
+Kartu stok, urut terbaru. `type`: `sale` / `goods_in` / `adjustment` / `opname`.
+Pagination + `meta` standar.
+
+---
+
+## 11. Endpoint Pembukuan 🔒 butuh `finance:manage` (cuma admin)
+
+> Permission `finance:manage` baru masuk ke token pas **login ulang** setelah
+> `bun run src/migrate.ts`.
+
+### POST `/v1/expenses`
+Catat pengeluaran operasional.
+```json
+{ "category": "Bahan baku", "description": "Susu UHT 24L", "amount": 312000, "spentOn": "2026-07-17" }
+```
+Balikannya `201` + `Location`. `spentOn` = tanggal kalender versi toko.
+
+### GET `/v1/expenses?from&to&category&limit&offset`
+Daftar pengeluaran (terbaru duluan). `meta` standar plus `amountTotal`
+(jumlah rupiah SEMUA baris yang cocok filter, bukan cuma halaman ini).
+
+### DELETE `/v1/expenses/{id}`
+Hapus entri yang salah. Balikannya `204`, `404` kalau nggak ada.
+
+### GET `/v1/reports/finance?from&to`  🔒 butuh `reports:read`
+Rekap pembukuan buat layar finance: omset − pengeluaran = laba, per hari
+(zero-filled) + breakdown kategori. Default rentang 30 hari kayak report lain.
+```json
+{
+  "data": {
+    "revenue": 25314000, "expenses": 812000, "net": 24502000,
+    "byCategory": [{ "category": "Listrik", "amount": 500000 }],
+    "days": [{ "date": "2026-07-17", "revenue": 25314000, "expenses": 812000, "net": 24502000 }]
+  },
+  "meta": { "from": "2026-07-17", "to": "2026-07-17", "timezone": "Asia/Jakarta" }
+}
+```
+
+---
+
+## 12. Catatan keamanan & desain (biar kebayang alasannya)
 
 - **Anti oversell**: pas checkout, stok dikunci pakai `SELECT ... FOR UPDATE` di
   dalam satu transaksi DB. Jadi kalau dua kasir rebutan stok terakhir bareng,

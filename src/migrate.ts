@@ -107,6 +107,37 @@ CREATE TABLE IF NOT EXISTS gateway_payments (
   paid_at          TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_gateway_payments_status ON gateway_payments(status);
+
+-- Kartu stok: one row per stock movement, signed quantity (sales and waste are
+-- negative). Sales are written by checkout in the same DB transaction that
+-- decrements stock, so the ledger can always be reconciled against stock.
+CREATE TABLE IF NOT EXISTS stock_movements (
+  id          BIGSERIAL PRIMARY KEY,
+  product_id  TEXT NOT NULL REFERENCES products(id),
+  type        TEXT NOT NULL CHECK (type IN ('sale', 'goods_in', 'adjustment', 'opname')),
+  quantity    INTEGER NOT NULL,
+  unit_cost   INTEGER CHECK (unit_cost >= 0),
+  supplier    TEXT,
+  note        TEXT,
+  ref         TEXT,
+  created_by  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at, id);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(product_id);
+
+-- Pembukuan: operating expenses (bahan baku, gaji, sewa, ...). Amounts are
+-- whole rupiah like everywhere else; spent_on is the store-time calendar date.
+CREATE TABLE IF NOT EXISTS expenses (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category    TEXT NOT NULL,
+  description TEXT NOT NULL,
+  amount      INTEGER NOT NULL CHECK (amount > 0),
+  spent_on    DATE NOT NULL,
+  created_by  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_expenses_spent_on ON expenses(spent_on);
 `;
 
 // id, sku, name, price (whole rupiah), stock.

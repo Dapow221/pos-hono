@@ -165,6 +165,91 @@ export const updateProductSchema = z
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 export type UpdateProductInput = z.infer<typeof updateProductSchema>;
 
+// ─── Inventory (stock opname, barang masuk, penyesuaian) ────────────────────
+
+/** Goods received from a supplier: only positive quantities, optional cost. */
+export const goodsInSchema = z
+  .object({
+    items: z
+      .array(
+        z.object({
+          productId: z.string().min(1),
+          quantity: z.number().int().positive().max(100_000),
+          unitCost: z.number().int().nonnegative().optional(),
+        }),
+      )
+      .min(1, "Goods-in needs at least one line.")
+      .max(100),
+    supplier: z.string().trim().min(1).max(120).optional(),
+    note: z.string().trim().min(1).max(300).optional(),
+  })
+  .strict();
+
+/** Stock opname: the physically counted quantity per product. */
+export const opnameSchema = z
+  .object({
+    counts: z
+      .array(
+        z.object({
+          productId: z.string().min(1),
+          counted: z.number().int().nonnegative().max(1_000_000),
+        }),
+      )
+      .min(1, "An opname needs at least one count.")
+      .max(200),
+    note: z.string().trim().min(1).max(300).optional(),
+  })
+  .strict();
+
+/** Manual correction (waste, breakage, found stock): signed quantity + reason. */
+export const stockAdjustmentSchema = z
+  .object({
+    productId: z.string().min(1),
+    quantity: z
+      .number()
+      .int()
+      .refine((v) => v !== 0, "Quantity cannot be zero.")
+      .refine((v) => Math.abs(v) <= 100_000, "Quantity is out of range."),
+    reason: z.string().trim().min(1).max(300),
+  })
+  .strict();
+
+export const MOVEMENT_TYPES = ["sale", "goods_in", "adjustment", "opname"] as const;
+
+/** Filters for the stock ledger. */
+export const movementFilterSchema = z.object({
+  productId: z.string().min(1).optional(),
+  type: z.enum(MOVEMENT_TYPES).optional(),
+  from: z.iso.date().optional(),
+  to: z.iso.date().optional(),
+});
+
+export type GoodsInInput = z.infer<typeof goodsInSchema>;
+export type OpnameInput = z.infer<typeof opnameSchema>;
+export type StockAdjustmentInput = z.infer<typeof stockAdjustmentSchema>;
+export type MovementFilterInput = z.infer<typeof movementFilterSchema>;
+
+// ─── Pembukuan (expenses) ───────────────────────────────────────────────────
+
+export const createExpenseSchema = z
+  .object({
+    category: z.string().trim().min(1).max(60),
+    description: z.string().trim().min(1).max(300),
+    amount: z.number().int().positive(),
+    /** Store-time calendar date the money was spent. */
+    spentOn: z.iso.date(),
+  })
+  .strict();
+
+export const expenseFilterSchema = z.object({
+  from: z.iso.date().optional(),
+  to: z.iso.date().optional(),
+  category: z.string().trim().min(1).max(60).optional(),
+});
+
+export type CreateExpenseInput = z.infer<typeof createExpenseSchema>;
+export type ExpenseFilterInput = z.infer<typeof expenseFilterSchema>;
+
 // ─── Reports ────────────────────────────────────────────────────────────────
 
 /** Date-range query params. Defaults (last 30 days) are applied in the service. */

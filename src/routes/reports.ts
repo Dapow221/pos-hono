@@ -18,6 +18,7 @@ import {
   getTransactions,
   type ReportRange,
 } from "../services/reports";
+import { getFinanceSummary } from "../services/finance";
 
 const route = new Hono<AuthEnv>();
 
@@ -88,6 +89,12 @@ route.get("/transactions", async (c) => {
   const page = parsePagination(query, { defaultLimit: 25 });
   const { rows, total } = await getTransactions(filters, page.limit, page.offset);
   return c.json({ data: rows, meta: pageMeta(total, page, rows.length) });
+});
+
+// GET /v1/reports/finance?from&to — pembukuan recap: omset vs pengeluaran vs laba.
+route.get("/finance", async (c) => {
+  const range = parseRange(c.req.query());
+  return c.json({ data: await getFinanceSummary(range), meta: rangeMeta(range) });
 });
 
 // GET /v1/reports/cashiers — everyone who has rung a sale, for the filter dropdown.
