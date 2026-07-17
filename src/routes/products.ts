@@ -6,17 +6,21 @@ import { requirePermission, type AuthEnv } from "../middleware/auth";
 import { PERMISSIONS } from "../auth/rbac";
 import { createProductSchema, updateProductSchema } from "../schemas";
 import { bumpReportsCacheVersion } from "../cache";
+import { parsePagination, pageMeta } from "../pagination";
 
 const route = new Hono<AuthEnv>();
 
-// GET /v1/products — list catalogue (capped page size). Requires products:read.
+// GET /v1/products?limit&offset — paginated catalogue. Requires products:read.
 route.get("/", requirePermission(PERMISSIONS.PRODUCTS_READ), async (c) => {
-  const limit = Math.min(Number(c.req.query("limit") ?? 100), 100);
-  const { rows } = await pool.query(
-    `SELECT id, sku, name, price, stock FROM products ORDER BY name LIMIT $1`,
-    [limit],
-  );
-  return c.json({ data: rows, meta: { count: rows.length, hasMore: false } });
+  const page = parsePagination(c.req.query(), { defaultLimit: 100 });
+  const [{ rows }, count] = await Promise.all([
+    pool.query(
+      `SELECT id, sku, name, price, stock FROM products ORDER BY name LIMIT $1 OFFSET $2`,
+      [page.limit, page.offset],
+    ),
+    pool.query(`SELECT COUNT(*) AS total FROM products`),
+  ]);
+  return c.json({ data: rows, meta: pageMeta(Number(count.rows[0].total), page, rows.length) });
 });
 
 // GET /v1/products/:id — single product. Requires products:read.

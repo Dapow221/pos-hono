@@ -7,25 +7,30 @@
  */
 import { z } from "zod";
 
+// Cart shape shared by counter checkout and gateway payments: same items, same
+// discount rules, so both paths price a sale identically.
+const cartItemsSchema = z
+  .array(
+    z.object({
+      productId: z.string().min(1),
+      quantity: z.number().int().positive().max(1000),
+    }),
+  )
+  .min(1, "A sale needs at least one item.")
+  .max(100, "A single sale is capped at 100 line items.");
+
+// Optional order-level discount: either a percentage (0–100) or a fixed amount.
+const discountSchema = z
+  .discriminatedUnion("type", [
+    z.object({ type: z.literal("percentage"), value: z.number().min(0).max(100) }),
+    z.object({ type: z.literal("fixed"), value: z.number().int().nonnegative() }),
+  ])
+  .optional();
+
 export const checkoutSchema = z
   .object({
-    items: z
-      .array(
-        z.object({
-          productId: z.string().min(1),
-          quantity: z.number().int().positive().max(1000),
-        }),
-      )
-      .min(1, "A sale needs at least one item.")
-      .max(100, "A single sale is capped at 100 line items."),
-
-    // Optional order-level discount: either a percentage (0–100) or a fixed amount.
-    discount: z
-      .discriminatedUnion("type", [
-        z.object({ type: z.literal("percentage"), value: z.number().min(0).max(100) }),
-        z.object({ type: z.literal("fixed"), value: z.number().int().nonnegative() }),
-      ])
-      .optional(),
+    items: cartItemsSchema,
+    discount: discountSchema,
 
     // One or more tenders — supports split payment (e.g. part cash, part card).
     payments: z
@@ -42,6 +47,45 @@ export const checkoutSchema = z
   .strict();
 
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
+
+// ─── Gateway payments (Midtrans / Xendit) ───────────────────────────────────
+
+/**
+ * A gateway payment carries the cart, not an amount: the server prices the sale
+ * itself (same rules as checkout), so a client can never charge the customer a
+ * different total than the sale is worth.
+ */
+export const createPaymentSchema = z
+  .object({
+    provider: z.enum(["midtrans", "xendit"]),
+    items: cartItemsSchema,
+    discount: discountSchema,
+    // Shown on the Xendit invoice / Midtrans page; optional.
+    customerEmail: z.string().email().optional(),
+  })
+  .strict();
+
+export type CreatePaymentInput = z.infer<typeof createPaymentSchema>;
+
+/** Midtrans HTTP notification — only the fields we act on; extras are ignored. */
+export const midtransNotificationSchema = z.object({
+  order_id: z.string().min(1),
+  status_code: z.string().min(1),
+  gross_amount: z.string().min(1),
+  signature_key: z.string().min(1),
+  transaction_status: z.string().min(1),
+  fraud_status: z.string().optional(),
+});
+
+/** Xendit invoice callback — only the fields we act on; extras are ignored. */
+export const xenditInvoiceCallbackSchema = z.object({
+  external_id: z.string().min(1),
+  status: z.string().min(1),
+  paid_amount: z.number().optional(),
+});
+
+export type MidtransNotification = z.infer<typeof midtransNotificationSchema>;
+export type XenditInvoiceCallback = z.infer<typeof xenditInvoiceCallbackSchema>;
 
 // ─── Auth ─────────────────────────────────────────────────────────────────
 
@@ -62,8 +106,39 @@ export const loginSchema = z
   })
   .strict();
 
+/** Quick-switch PIN: 4–6 digits. Hashed with bcrypt before it touches the DB. */
+export const setPinSchema = z
+  .object({
+    pin: z.string().regex(/^\d{4,6}$/, "PIN must be 4-6 digits."),
+  })
+  .strict();
+
+/** Admin-provisioned user: created from the staff screen, no session issued. */
+export const createUserSchema = z
+  .object({
+    email: z.string().email(),
+    fullName: z.string().min(1).max(120),
+    password: z.string().min(8, "Password must be at least 8 characters.").max(72),
+    role: z.enum(["cashier", "admin"]).default("cashier"),
+    // Optionally set the quick-switch PIN in the same request.
+    pin: z.string().regex(/^\d{4,6}$/, "PIN must be 4-6 digits.").optional(),
+  })
+  .strict();
+
+/** PIN login: the cashier-switch screen sends the picked user's id + their PIN. */
+export const pinLoginSchema = z
+  .object({
+    // Must be a UUID: a malformed id would otherwise error inside Postgres.
+    userId: z.uuid(),
+    pin: z.string().regex(/^\d{4,6}$/, "PIN must be 4-6 digits."),
+  })
+  .strict();
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+export type CreateUserInput = z.infer<typeof createUserSchema>;
+export type SetPinInput = z.infer<typeof setPinSchema>;
+export type PinLoginInput = z.infer<typeof pinLoginSchema>;
 
 // ─── Product write ──────────────────────────────────────────────────────────
 
@@ -99,3 +174,16 @@ export const reportRangeSchema = z.object({
 });
 
 export type ReportRangeInput = z.infer<typeof reportRangeSchema>;
+
+/**
+ * Transaction-log filters. All optional and combinable; unlike the chart
+ * reports there is NO default date range — the unfiltered log is "all time".
+ */
+export const transactionFilterSchema = z.object({
+  from: z.iso.date().optional(),
+  to: z.iso.date().optional(),
+  cashierId: z.uuid().optional(),
+  receipt: z.string().trim().min(1).max(64).optional(),
+});
+
+export type TransactionFilterInput = z.infer<typeof transactionFilterSchema>;

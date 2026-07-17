@@ -17,7 +17,11 @@ oversell stok dan nggak bakal nge-charge dobel.
 bun install
 bun run src/migrate.ts     # bikin tabel + isi data awal (role, user, produk). Aman diulang kok
 bun run dev                # http://localhost:3000
+bun run seed:demo 20000    # (opsional) isi 20 ribu transaksi demo buat nyobain paginasi/dashboard
 ```
+
+> Data demo transaksi bisa dihapus lagi dengan
+> `DELETE FROM transactions WHERE idempotency_key LIKE 'demo-%';`
 
 Postgres-nya diasumsiin udah jalan di `localhost:5432`, database `pos_hono`
 (kalau beda, tinggal ganti `DATABASE_URL` di file `.env`).
@@ -163,16 +167,18 @@ Balikannya `200`:
 
 ## 5. Endpoint Products
 
-### GET `/v1/products`  🔒 butuh `products:read`
-Query opsional: `limit` (default 100, maksimal 100).
+### GET `/v1/products?limit&offset`  🔒 butuh `products:read`
+Paginasi offset: `limit` (default 100, maks 100) + `offset` (default 0).
+Parameter yang ngaco (bukan angka / negatif) di-fallback ke default, nggak error.
 
 Balikannya `200`:
 ```json
 {
   "data": [{ "id": "p_kopi", "sku": "BVG-001", "name": "Kopi Susu", "price": 18000, "stock": 50 }],
-  "meta": { "count": 1, "hasMore": false }
+  "meta": { "total": 7, "limit": 100, "offset": 0, "hasMore": false }
 }
 ```
+Ngambil halaman berikutnya: `offset += limit` selama `hasMore` masih `true`.
 
 ### GET `/v1/products/:id`  🔒 butuh `products:read`
 Balikannya `200` → `{ "data": { ... } }`, atau `404` kalau produknya nggak ada.
@@ -282,7 +288,123 @@ Contoh error stok kurang (`409`):
 
 ---
 
-## 7. Endpoint Reports (buat dashboard) 🔒 butuh `reports:read` (cuma admin)
+## 7. Endpoint Payments — bayar online via Midtrans / Xendit
+
+Buat customer yang mau bayar lewat QRIS/e-wallet/VA/kartu online. Bedanya sama
+checkout biasa: pembayarannya **asinkron** — kasir bikin tagihan dulu, customer
+bayar lewat halaman gateway, terus gateway ngasih tahu server lewat **webhook**.
+Baru pas webhook itu masuk, stok dipotong dan transaksi dicatat (lewat mesin
+checkout yang sama, jadi anti oversell & anti dobel juga berlaku di sini).
+
+Setup di `.env` (dua-duanya opsional — provider yang belum diisi bakal balas
+`503 PROVIDER_NOT_CONFIGURED`):
+
+```
+MIDTRANS_SERVER_KEY=SB-Mid-server-xxxx   # sandbox: https://dashboard.sandbox.midtrans.com
+MIDTRANS_IS_PRODUCTION=false
+XENDIT_SECRET_KEY=xnd_development_xxxx   # https://dashboard.xendit.co
+XENDIT_CALLBACK_TOKEN=xxxx               # Settings → Webhooks → verification token
+PAYMENT_EXPIRY_MIN=30                    # umur link pembayaran (menit)
+```
+
+Jangan lupa daftarin URL webhook di dashboard masing-masing:
+- Midtrans → Payment Notification URL: `https://<server>/v1/payments/webhooks/midtrans`
+- Xendit → Invoices callback: `https://<server>/v1/payments/webhooks/xendit`
+
+### POST `/v1/payments`  🔒 butuh `checkout:create`
+
+Header wajib sama kayak checkout: `Authorization` + `Idempotency-Key`.
+
+Yang dikirim (perhatiin: **nggak ada field `amount`** — server yang ngitung
+totalnya pakai aturan harga yang sama persis kayak checkout, jadi client nggak
+bisa nagih customer beda dari harga aslinya):
+```json
+{
+  "provider": "midtrans",
+  "items": [{ "productId": "p_kopi", "quantity": 2 }],
+  "discount": { "type": "percentage", "value": 10 },
+  "customerEmail": "budi@example.com"
+}
+```
+
+- `provider`: `midtrans` (halaman Snap) atau `xendit` (invoice).
+- `items` + `discount`: aturannya sama persis kayak checkout.
+- `customerEmail` (opsional): muncul di halaman pembayaran.
+
+Balikannya `201`:
+```json
+{
+  "data": {
+    "id": "uuid",
+    "provider": "midtrans",
+    "status": "pending",
+    "amount": 35900,
+    "paymentUrl": "https://app.sandbox.midtrans.com/snap/v4/redirection/…",
+    "providerRef": "token-snap-atau-id-invoice",
+    "externalRef": "pos-…",
+    "transactionId": null,
+    "createdAt": "2026-07-16T12:00:00.000Z",
+    "paidAt": null
+  }
+}
+```
+
+Kasih `paymentUrl` ke customer (buka link / tampilin QR-nya). Idempotency-nya
+sama kayak checkout: kirim ulang pakai key yang sama → balikin payment yang
+sama, `200`, header `Idempotent-Replay: true`.
+
+> Buat frontend: kalau provider-nya `midtrans`, `providerRef` itu **Snap
+> token** — bisa langsung dipakai `window.snap.pay(providerRef, {...})` biar
+> popup pembayarannya kebuka di dalam halaman kamu sendiri (butuh `snap.js` +
+> client key Midtrans, yang memang public). Kalau `xendit`, `providerRef` itu
+> id invoice-nya; pakai `paymentUrl` buat redirect/iframe.
+
+### GET `/v1/payments/{id}`  🔒 butuh `checkout:create`
+
+Buat polling dari layar kasir. Begitu customer bayar dan webhook-nya masuk,
+`status` berubah jadi `paid` dan `transactionId` keisi (itu id transaksi di
+`/v1/checkout`, lengkap sama struknya). Status yang mungkin: `pending`,
+`paid`, `failed`, `expired`.
+
+### POST `/v1/payments/{id}/simulate`  🔒 butuh `checkout:create` — **khusus development**
+
+Nandain payment sebagai lunas **tanpa** webhook beneran — buat ngetes dari
+frontend lokal, soalnya gateway nggak bisa nembak `localhost`. Lewat jalur
+finalisasi yang sama persis kayak webhook asli (stok kepotong, transaksi
+kebikin, idempotent). Cuma aktif kalau `NODE_ENV=development`; di production
+endpoint ini balas `404`, jadi nggak mungkin dipakai buat malsuin penjualan.
+
+Balikannya `200` dengan payment yang udah `paid` + `transactionId` keisi.
+
+### POST `/v1/payments/webhooks/midtrans` dan `/v1/payments/webhooks/xendit`
+
+Ini yang dipanggil **gateway**, bukan frontend — jadi nggak pakai Bearer token.
+Keamanannya pakai mekanisme masing-masing provider:
+- Midtrans: `signature_key` diverifikasi (SHA-512 dari `order_id` +
+  `status_code` + `gross_amount` + server key). Salah → `401`.
+- Xendit: header `x-callback-token` harus cocok sama `XENDIT_CALLBACK_TOKEN`.
+  Salah → `401`.
+
+Webhook aman dikirim berulang: pembayaran yang udah `paid` nggak diproses dua
+kali (idempotency key turunan `gw:<externalRef>` di mesin checkout).
+
+Kasus langka: customer udah bayar tapi stoknya keburu abis dijual kasir lain.
+Duitnya tetep dicatat (`status: "paid"`) tapi `transactionId`-nya kosong dan
+alasannya kesimpen di kolom `finalize_error` — itu sinyal buat refund manual,
+bukan alesan buat pura-pura duitnya nggak masuk.
+
+| Error | Kapan munculnya |
+|-------|-----------------|
+| 400 | `Idempotency-Key` nggak diisi / body ngaco / jumlah bayar dari gateway nggak cocok |
+| 401 | signature/callback token webhook salah |
+| 404 | productId nggak ada, payment id nggak ada, atau webhook nyebut order yang nggak dikenal |
+| 409 | stok kurang pas bikin tagihan |
+| 502 | gateway-nya nolak request (key salah, dsb.) |
+| 503 | provider belum dikonfigurasi di `.env` |
+
+---
+
+## 8. Endpoint Reports (buat dashboard) 🔒 butuh `reports:read` (cuma admin)
 
 Semua endpoint di bawah ini read-only, khusus buat nyuplai data dashboard.
 Endpoint yang berbasis rentang tanggal nerima query opsional `from` dan `to`
@@ -336,6 +458,43 @@ buat alert restock. Nggak pakai rentang tanggal.
 { "data": [{ "id": "p_teh", "sku": "BVG-002", "name": "Teh Manis", "stock": 0 }], "meta": { "threshold": 10, "count": 1 } }
 ```
 
+### GET `/v1/reports/transactions?limit&offset&from&to&cashierId&receipt`
+Log transaksi lengkap buat tabel di dashboard, urut dari yang terbaru.
+Pakai pagination offset (`limit` default 25, maks 100; `offset` default 0).
+`meta.total` + `meta.hasMore` dipakai buat ngambil semua halaman.
+
+Filter (semuanya opsional, boleh digabung — beda sama report lain, log ini
+**nggak** punya default rentang tanggal, tanpa filter artinya sepanjang masa):
+- `from` / `to`: tanggal inklusif `YYYY-MM-DD` (hari versi Asia/Jakarta).
+- `cashierId`: UUID kasir (ambil daftarnya dari `/v1/reports/cashiers`).
+- `receipt`: potongan nomor struk, case-insensitive (misal `MRNS`).
+
+`meta.total` selalu ngikutin hasil yang udah difilter — jadi pagination di
+frontend tetap bener.
+```json
+{
+  "data": [{
+    "id": "…", "receiptNo": "RCP-…", "cashierName": "Admin Toko",
+    "grandTotal": 20000, "itemCount": 1, "methods": ["cash"],
+    "createdAt": "2026-07-15T16:51:37.545Z"
+  }],
+  "meta": { "total": 42, "limit": 25, "offset": 0, "hasMore": true }
+}
+```
+Catatan: `methods` bisa berisi `cash`/`card`/`qris` ataupun `midtrans`/`xendit`
+(buat penjualan yang dibayar lewat gateway).
+
+| Error | Kapan munculnya |
+|-------|-----------------|
+| 400 | format tanggal salah, `from` > `to`, atau `cashierId` bukan UUID |
+
+### GET `/v1/reports/cashiers`
+Semua user yang pernah nyatet minimal satu transaksi — buat isi dropdown
+filter kasir di dashboard.
+```json
+{ "data": [{ "id": "uuid", "fullName": "Anya Putri" }], "meta": { "count": 1 } }
+```
+
 ### GET `/v1/reports/recent-transactions?limit`
 Transaksi terbaru buat feed aktivitas di dashboard. `limit` default 10, maks 50.
 ```json
@@ -349,7 +508,106 @@ Transaksi terbaru buat feed aktivitas di dashboard. `limit` default 10, maks 50.
 
 ---
 
-## 8. Catatan keamanan & desain (biar kebayang alasannya)
+## 9. Endpoint Users — PIN kasir
+
+Buat layar "pilih kasir" di POS: tiap kasir punya PIN pendek buat gonta-ganti
+user cepat di satu perangkat. PIN-nya di-hash pakai bcrypt (sama kayak
+password) — nggak pernah disimpen atau dibalikin dalam bentuk asli.
+
+### POST `/v1/users`  🔒 butuh `users:manage` (cuma admin)
+
+Admin bikin akun staf baru dari layar Staff — beda sama `/v1/auth/register`:
+bisa pilih role, bisa langsung set PIN, dan **nggak** nge-set sesi/cookie baru
+(admin tetap login sebagai dirinya).
+
+```json
+{
+  "email": "anya@ratio.test",
+  "fullName": "Anya Putri",
+  "password": "AnyaRatio1!",
+  "role": "cashier",
+  "pin": "1234"
+}
+```
+
+- `role`: `cashier` (default) atau `admin`. `pin` (opsional): 4–6 digit.
+- Balikannya `201` + header `Location`:
+```json
+{ "data": { "id": "uuid", "email": "anya@ratio.test", "fullName": "Anya Putri", "role": "cashier", "hasPin": true, "createdAt": "…" } }
+```
+
+| Error | Kapan munculnya |
+|-------|-----------------|
+| 400 | email ngaco / password < 8 huruf / PIN bukan 4–6 digit |
+| 403 | bukan admin (nggak punya users:manage) |
+| 409 | email udah kedaftar |
+
+### GET `/v1/users?limit&offset`  🔒 butuh `users:manage` (cuma admin)
+
+Semua akun, buat layar manajemen staf. Hash password/PIN nggak pernah ikut.
+Paginasi offset: `limit` (default 20, maks 100) + `offset`.
+
+```json
+{
+  "data": [{ "id": "uuid", "email": "anya@ratio.test", "fullName": "Anya Putri", "role": "cashier", "hasPin": true, "createdAt": "…" }],
+  "meta": { "total": 9, "limit": 20, "offset": 0, "hasMore": false }
+}
+```
+
+### PUT `/v1/users/{id}/pin`  🔒 butuh `users:manage` (cuma admin)
+
+```json
+{ "pin": "123456" }
+```
+
+- `pin`: 4–6 digit angka. Ngirim lagi = ganti PIN lama (replace).
+- Balikannya `204` (kosong). `404` kalau user id-nya nggak ada, `403` kalau
+  bukan admin.
+- Catatan: permission `users:manage` baru masuk ke token pas **login ulang**
+  setelah `bun run src/migrate.ts` (permissions kebawa di dalam JWT).
+
+### GET `/v1/users/with-pin?limit&offset` — publik (tanpa token)
+
+Semua user yang udah punya PIN — datanya buat layar pemilihan kasir (lock
+screen), yang memang tampil **sebelum** ada yang login. Karena publik,
+balikannya sengaja minim: cuma nama + role, **tanpa email**. Paginasi offset:
+`limit` (default 100, maks 100) + `offset`.
+
+```json
+{
+  "data": [
+    { "id": "uuid", "fullName": "Kasir Satu", "role": "cashier" }
+  ],
+  "meta": { "total": 3, "limit": 100, "offset": 0, "hasMore": false }
+}
+```
+
+PIN-nya sendiri **nggak pernah** ikut kebalikin — verifikasi PIN dilakukan
+server-side (hash compare), bukan di client.
+
+### POST `/v1/auth/pin-login` — tanpa token (ini pintu masuknya)
+
+Login cepat buat layar ganti kasir: pilih user dari `/v1/users/with-pin`,
+ketik PIN, dapet sesi lengkap (accessToken + refresh cookie) — persis kayak
+login email/password.
+
+```json
+{ "userId": "uuid-dari-with-pin", "pin": "123456" }
+```
+
+- Balikannya sama kayak `POST /v1/auth/login` (`data.user` + `data.accessToken`,
+  refresh token kepasang di cookie httpOnly).
+- `401` kalau PIN salah / user-nya nggak punya PIN (pesannya sengaja disamain
+  biar nggak bocor yang mana yang salah). `400` kalau `userId` bukan UUID.
+- Kena rate limit auth yang sama: **5 request/menit per IP** — nebak-nebak PIN
+  6 digit bakal kena 429 duluan.
+
+Alur lengkap layar kasir: `GET /v1/users/with-pin` (pakai token perangkat) →
+user milih namanya → `POST /v1/auth/pin-login` → token baru buat kasir itu.
+
+---
+
+## 10. Catatan keamanan & desain (biar kebayang alasannya)
 
 - **Anti oversell**: pas checkout, stok dikunci pakai `SELECT ... FOR UPDATE` di
   dalam satu transaksi DB. Jadi kalau dua kasir rebutan stok terakhir bareng,

@@ -31,6 +31,19 @@ const envSchema = z.object({
     .string()
     .default("http://localhost:3000")
     .transform((v) => v.split(",").map((s) => s.trim()).filter(Boolean)),
+
+  // Payment gateways. All optional: a provider without credentials is simply
+  // reported as "not configured" at request time — the app still boots.
+  MIDTRANS_SERVER_KEY: z.string().min(1).optional(),
+  MIDTRANS_IS_PRODUCTION: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+  XENDIT_SECRET_KEY: z.string().min(1).optional(),
+  // Shared secret Xendit sends back in the `x-callback-token` webhook header.
+  XENDIT_CALLBACK_TOKEN: z.string().min(1).optional(),
+  // How long a gateway payment link/invoice stays payable.
+  PAYMENT_EXPIRY_MIN: z.coerce.number().int().positive().max(24 * 60).default(30),
 });
 
 const parsed = envSchema.safeParse(process.env);

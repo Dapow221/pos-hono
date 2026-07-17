@@ -193,6 +193,122 @@ export interface RecentTransaction {
   createdAt: string;
 }
 
+export interface TransactionRow {
+  id: string;
+  receiptNo: string;
+  cashierName: string | null;
+  grandTotal: number;
+  itemCount: number;
+  methods: string[];
+  createdAt: string;
+}
+
+export interface TransactionPage {
+  rows: TransactionRow[];
+  total: number;
+}
+
+export interface TransactionFilters {
+  /** Inclusive store-time dates, YYYY-MM-DD. */
+  from?: string;
+  to?: string;
+  cashierId?: string;
+  /** Substring match on the receipt number, case-insensitive. */
+  receipt?: string;
+}
+
+/** Escape LIKE wildcards so a receipt search is a literal substring match. */
+function escapeLike(term: string): string {
+  return term.replace(/[\\%_]/g, "\\$&");
+}
+
+/**
+ * Paginated transaction log for the dashboard table, newest first.
+ * Filters and pagination both apply to the inner subquery, so only the
+ * selected page is joined to lines/users — cost per request stays flat no
+ * matter how many total transactions exist. The COUNT shares the same WHERE,
+ * so `total` always describes the filtered set.
+ */
+export async function getTransactions(
+  filters: TransactionFilters,
+  limit: number,
+  offset: number,
+): Promise<TransactionPage> {
+  if (filters.from && filters.to && filters.from > filters.to) {
+    throw Errors.validation("'from' must be on or before 'to'.");
+  }
+
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  const storeDay = `(created_at AT TIME ZONE '${REPORT_TIMEZONE}')::date`;
+  if (filters.from) {
+    params.push(filters.from);
+    conditions.push(`${storeDay} >= $${params.length}`);
+  }
+  if (filters.to) {
+    params.push(filters.to);
+    conditions.push(`${storeDay} <= $${params.length}`);
+  }
+  if (filters.cashierId) {
+    params.push(filters.cashierId);
+    conditions.push(`cashier_id = $${params.length}`);
+  }
+  if (filters.receipt) {
+    params.push(`%${escapeLike(filters.receipt)}%`);
+    conditions.push(`receipt_no ILIKE $${params.length}`);
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const [{ rows }, count] = await Promise.all([
+    pool.query(
+      `SELECT t.id, t.receipt_no, t.grand_total, t.created_at,
+              u.full_name AS cashier_name,
+              COALESCE(SUM(l.quantity), 0) AS item_count,
+              (SELECT COALESCE(array_agg(DISTINCT p.method), '{}')
+                 FROM payments p WHERE p.transaction_id = t.id) AS methods
+         FROM (SELECT id, receipt_no, grand_total, created_at, cashier_id
+                 FROM transactions
+                ${where}
+                ORDER BY created_at DESC, id DESC
+                LIMIT $${params.length + 1} OFFSET $${params.length + 2}) t
+         LEFT JOIN users u ON u.id::text = t.cashier_id
+         LEFT JOIN transaction_lines l ON l.transaction_id = t.id
+        GROUP BY t.id, t.receipt_no, t.grand_total, t.created_at, u.full_name
+        ORDER BY t.created_at DESC, t.id DESC`,
+      [...params, limit, offset],
+    ),
+    pool.query(`SELECT COUNT(*) AS total FROM transactions ${where}`, params),
+  ]);
+  return {
+    rows: rows.map((r) => ({
+      id: r.id,
+      receiptNo: r.receipt_no,
+      cashierName: r.cashier_name,
+      grandTotal: Number(r.grand_total),
+      itemCount: Number(r.item_count),
+      methods: r.methods,
+      createdAt: r.created_at.toISOString(),
+    })),
+    total: Number(count.rows[0].total),
+  };
+}
+
+export interface ReportCashier {
+  id: string;
+  fullName: string;
+}
+
+/** Everyone who has rung at least one sale — options for the cashier filter. */
+export async function getTransactionCashiers(): Promise<ReportCashier[]> {
+  const { rows } = await pool.query<{ id: string; full_name: string }>(
+    `SELECT u.id, u.full_name
+       FROM users u
+      WHERE EXISTS (SELECT 1 FROM transactions t WHERE t.cashier_id = u.id::text)
+      ORDER BY u.full_name`,
+  );
+  return rows.map((r) => ({ id: r.id, fullName: r.full_name }));
+}
+
 export async function getRecentTransactions(limit: number): Promise<RecentTransaction[]> {
   const { rows } = await pool.query(
     `SELECT t.id, t.receipt_no, t.cashier_id, t.grand_total, t.created_at,

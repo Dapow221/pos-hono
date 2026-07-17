@@ -10,8 +10,15 @@ export interface TransactionLine {
   subtotal: Rupiah;
 }
 
+/**
+ * Tender methods. cash/card/qris are taken at the counter; midtrans/xendit are
+ * settled online through a gateway and only ever recorded by the webhook
+ * finalizer — the public checkout schema does not accept them directly.
+ */
+export type PaymentMethod = "cash" | "card" | "qris" | "midtrans" | "xendit";
+
 export interface Payment {
-  method: "cash" | "card" | "qris";
+  method: PaymentMethod;
   amount: Rupiah;
 }
 

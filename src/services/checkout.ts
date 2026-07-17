@@ -9,7 +9,7 @@ import {
   type Rupiah,
 } from "../money";
 import type { CheckoutInput } from "../schemas";
-import type { Transaction, TransactionLine } from "../types";
+import type { Payment, Transaction, TransactionLine } from "../types";
 
 export interface CheckoutResult {
   transaction: Transaction;
@@ -17,77 +17,47 @@ export interface CheckoutResult {
   isReplay: boolean;
 }
 
+/**
+ * Superset of the public checkout body: gateway finalization records tenders
+ * like "midtrans"/"xendit" that the public schema deliberately rejects.
+ */
+export interface CheckoutRequest {
+  items: CheckoutInput["items"];
+  discount?: CheckoutInput["discount"];
+  payments: Payment[];
+  cashierId?: string | null;
+}
+
 export async function processCheckout(
-  input: CheckoutInput,
+  input: CheckoutRequest,
   idempotencyKey: string,
 ): Promise<CheckoutResult> {
   return withTransaction(async (tx) => {
     const replay = await findTransactionByKey(tx, idempotencyKey);
     if (replay) return { transaction: replay, isReplay: true };
 
-    const wanted = mergeQuantities(input.items);
-    const productIds = [...wanted.keys()];
+    const productIds = [...mergeQuantities(input.items).keys()];
     const products = await lockProducts(tx, productIds);
-
-    const lines: TransactionLine[] = [];
-    const stockProblems: Array<{ productId: string; requested: number; available: number }> = [];
-    for (const [productId, quantity] of wanted) {
-      const product = products.get(productId);
-      if (!product) throw Errors.notFound(`Product ${productId} not found.`);
-      if (product.stock < quantity) {
-        stockProblems.push({ productId, requested: quantity, available: product.stock });
-        continue;
-      }
-      lines.push({
-        productId,
-        sku: product.sku,
-        name: product.name,
-        unitPrice: product.price,
-        quantity,
-        subtotal: product.price * quantity,
-      });
-    }
-    if (stockProblems.length > 0) throw Errors.insufficientStock(stockProblems);
-
-    const subtotal: Rupiah = lines.reduce((sum, l) => sum + l.subtotal, 0);
-
-    let discount: Rupiah = 0;
-    if (input.discount) {
-      discount =
-        input.discount.type === "percentage"
-          ? percentageOf(subtotal, clampPercent(input.discount.value))
-          : Math.round(input.discount.value);
-      discount = Math.min(discount, subtotal);
-    }
-    const taxableBase: Rupiah = subtotal - discount;
-
-    const tax: Rupiah = percentageOf(taxableBase, TAX_RATE_PERCENT);
-
-    // 4c. Round the final total to the nearest Rp 100 ("pembulatan"); keep the
-    //     adjustment so the receipt explains the rounding line.
-    const grandTotalRaw: Rupiah = taxableBase + tax;
-    const grandTotal: Rupiah = roundToNearest(grandTotalRaw, ROUNDING_STEP);
-    const rounding: Rupiah = grandTotal - grandTotalRaw;
+    const cart = priceCart(products, input);
 
     const amountPaid: Rupiah = input.payments.reduce((sum, p) => sum + p.amount, 0);
-    if (amountPaid < grandTotal) {
-      throw Errors.insufficientPayment({ grandTotal, amountPaid, shortfall: grandTotal - amountPaid });
+    if (amountPaid < cart.grandTotal) {
+      throw Errors.insufficientPayment({
+        grandTotal: cart.grandTotal,
+        amountPaid,
+        shortfall: cart.grandTotal - amountPaid,
+      });
     }
-    const change: Rupiah = amountPaid - grandTotal;
+    const change: Rupiah = amountPaid - cart.grandTotal;
 
-    for (const line of lines) {
+    for (const line of cart.lines) {
       await tx.query(`UPDATE products SET stock = stock - $1 WHERE id = $2`, [line.quantity, line.productId]);
     }
 
     const transaction = await insertTransaction(tx, {
       idempotencyKey,
       cashierId: input.cashierId ?? null,
-      lines,
-      subtotal,
-      discount,
-      tax,
-      rounding,
-      grandTotal,
+      ...cart,
       payments: input.payments,
       amountPaid,
       change,
@@ -97,9 +67,70 @@ export async function processCheckout(
   });
 }
 
+export interface PricedCart {
+  lines: TransactionLine[];
+  subtotal: Rupiah;
+  discount: Rupiah;
+  tax: Rupiah;
+  rounding: Rupiah;
+  grandTotal: Rupiah;
+}
+
+/**
+ * Price a cart against a set of product rows: build lines, check stock, apply
+ * the discount, tax, and Rp 100 rounding ("pembulatan", kept as its own line so
+ * the receipt explains it). This is the ONE pricing function — counter checkout
+ * and gateway payments both go through it, so their totals can never diverge.
+ */
+export function priceCart(
+  products: Map<string, ProductRow>,
+  input: Pick<CheckoutRequest, "items" | "discount">,
+): PricedCart {
+  const wanted = mergeQuantities(input.items);
+
+  const lines: TransactionLine[] = [];
+  const stockProblems: Array<{ productId: string; requested: number; available: number }> = [];
+  for (const [productId, quantity] of wanted) {
+    const product = products.get(productId);
+    if (!product) throw Errors.notFound(`Product ${productId} not found.`);
+    if (product.stock < quantity) {
+      stockProblems.push({ productId, requested: quantity, available: product.stock });
+      continue;
+    }
+    lines.push({
+      productId,
+      sku: product.sku,
+      name: product.name,
+      unitPrice: product.price,
+      quantity,
+      subtotal: product.price * quantity,
+    });
+  }
+  if (stockProblems.length > 0) throw Errors.insufficientStock(stockProblems);
+
+  const subtotal: Rupiah = lines.reduce((sum, l) => sum + l.subtotal, 0);
+
+  let discount: Rupiah = 0;
+  if (input.discount) {
+    discount =
+      input.discount.type === "percentage"
+        ? percentageOf(subtotal, clampPercent(input.discount.value))
+        : Math.round(input.discount.value);
+    discount = Math.min(discount, subtotal);
+  }
+  const taxableBase: Rupiah = subtotal - discount;
+
+  const tax: Rupiah = percentageOf(taxableBase, TAX_RATE_PERCENT);
+
+  const grandTotalRaw: Rupiah = taxableBase + tax;
+  const grandTotal: Rupiah = roundToNearest(grandTotalRaw, ROUNDING_STEP);
+  const rounding: Rupiah = grandTotal - grandTotalRaw;
+
+  return { lines, subtotal, discount, tax, rounding, grandTotal };
+}
 
 /** Sum quantities for repeated productIds so each product is locked once. */
-function mergeQuantities(items: CheckoutInput["items"]): Map<string, number> {
+function mergeQuantities(items: CheckoutRequest["items"]): Map<string, number> {
   const merged = new Map<string, number>();
   for (const item of items) {
     merged.set(item.productId, (merged.get(item.productId) ?? 0) + item.quantity);
@@ -107,7 +138,7 @@ function mergeQuantities(items: CheckoutInput["items"]): Map<string, number> {
   return merged;
 }
 
-interface ProductRow {
+export interface ProductRow {
   id: string;
   sku: string;
   name: string;
@@ -152,7 +183,7 @@ interface InsertArgs {
   tax: number;
   rounding: number;
   grandTotal: number;
-  payments: CheckoutInput["payments"];
+  payments: Payment[];
   amountPaid: number;
   change: number;
 }

@@ -13,6 +13,33 @@
     {
       "key": "accessToken",
       "value": ""
+    },
+    {
+      "key": "midtransServerKey",
+      "value": "",
+      "description": "Isi sama MIDTRANS_SERVER_KEY yang dipakai server — dipakai buat ngitung signature webhook simulasi."
+    },
+    {
+      "key": "xenditCallbackToken",
+      "value": "",
+      "description": "Isi sama XENDIT_CALLBACK_TOKEN yang dipakai server — dipakai di header webhook simulasi."
+    },
+    {
+      "key": "paymentId",
+      "value": ""
+    },
+    {
+      "key": "paymentExternalRef",
+      "value": ""
+    },
+    {
+      "key": "paymentAmount",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": "",
+      "description": "Keisi otomatis pas Login (cashier) — target buat Set PIN."
     }
   ],
   "item": [
@@ -29,6 +56,7 @@
                   "const json = pm.response.json();",
                   "if (json.data && json.data.accessToken) {",
                   "  pm.collectionVariables.set('accessToken', json.data.accessToken);",
+                  "  pm.collectionVariables.set('userId', json.data.user.id);",
                   "}"
                 ],
                 "type": "text/javascript"
@@ -58,7 +86,7 @@
               "mode": "raw",
               "raw": "{\n  \"email\": \"kasir.baru@pos.test\",\n  \"password\": \"Rahasia123!\",\n  \"fullName\": \"Kasir Baru\"\n}"
             },
-            "description": "Daftar user baru. Otomatis jadi role `cashier`. Balikannya accessToken + cookie refresh token (httpOnly) langsung kepasang."
+            "description": "Daftar user baru. Otomatis jadi role `cashier`. Balikannya accessToken + cookie refresh token (httpOnly) langsung kepasang. Id user barunya kesimpen ke {{userId}} — jadi habis ini bisa langsung Login (admin) → Users/Set PIN tanpa copy-paste. Email harus unik (409 kalau dobel)."
           }
         },
         {
@@ -113,6 +141,7 @@
                   "const json = pm.response.json();",
                   "if (json.data && json.data.accessToken) {",
                   "  pm.collectionVariables.set('accessToken', json.data.accessToken);",
+                  "  pm.collectionVariables.set('userId', json.data.user.id);",
                   "}"
                 ],
                 "type": "text/javascript"
@@ -142,7 +171,49 @@
               "mode": "raw",
               "raw": "{\n  \"email\": \"kasir@pos.test\",\n  \"password\": \"Kasir123!\"\n}"
             },
-            "description": "Login sebagai kasir buat ngetes RBAC — coba bikin produk nanti pasti kena 403, soalnya kasir nggak punya izinnya."
+            "description": "Login sebagai kasir buat ngetes RBAC — coba bikin produk nanti pasti kena 403, soalnya kasir nggak punya izinnya. Id user-nya kesimpen ke variable {{userId}} (dipakai request Set PIN)."
+          }
+        },
+        {
+          "name": "PIN login (cashier switch)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.data && json.data.accessToken) {",
+                  "  pm.collectionVariables.set('accessToken', json.data.accessToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/pin-login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "pin-login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"pin\": \"123456\"\n}"
+            },
+            "description": "Login cepat pakai PIN (layar ganti kasir). Urutan nyobanya: Login (cashier) buat ngisi {{userId}} → Login (admin) → Users/Set PIN → request ini. Balikannya sama kayak login biasa; accessToken otomatis kesimpen. Salah PIN / user tanpa PIN = 401. Kena rate limit 5 req/menit."
           }
         },
         {
@@ -237,7 +308,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/v1/products?limit=100",
+              "raw": "{{baseUrl}}/v1/products?limit=100&offset=0",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -249,10 +320,14 @@
                 {
                   "key": "limit",
                   "value": "100"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
                 }
               ]
             },
-            "description": "Liat daftar produk. Butuh izin products:read (admin sama kasir dua-duanya punya). limit maksimal 100."
+            "description": "Liat daftar produk (paginasi offset). Butuh izin products:read (admin sama kasir dua-duanya punya). limit default 100 maks 100, offset default 0. meta ngasih total + hasMore — lanjut halaman berikutnya dengan offset += limit."
           }
         },
         {
@@ -381,6 +456,327 @@
               "raw": "{\n  \"items\": [\n    { \"productId\": \"p_kopi\", \"quantity\": 2 },\n    { \"productId\": \"p_nasi\", \"quantity\": 1 }\n  ],\n  \"discount\": { \"type\": \"percentage\", \"value\": 10 },\n  \"payments\": [\n    { \"method\": \"cash\", \"amount\": 100000 }\n  ]\n}"
             },
             "description": "Proses transaksi jualan. Butuh izin checkout:create. Header Idempotency-Key WAJIB; kalau dikirim ulang pakai key yang sama, dia balikin struk yang sama persis (200, header Idempotent-Replay: true) tanpa bikin transaksi baru. Stok dikurangin secara atomik pakai row lock biar nggak oversell. Diskon opsional (percentage 0-100 atau fixed). PPN 11% dihitung setelah diskon. Total dibulatin ke Rp 100 terdekat. payments boleh lebih dari satu (bayar campur)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "List users (admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/users?limit=20&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "Semua akun buat layar manajemen staf (paginasi offset, limit default 20 maks 100). Butuh users:manage (cuma admin). meta: total/limit/offset/hasMore."
+          }
+        },
+        {
+          "name": "Set PIN (admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/users/{{userId}}/pin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "users",
+                "{{userId}}",
+                "pin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pin\": \"123456\"\n}"
+            },
+            "description": "Set/ganti PIN user (4-6 digit). Butuh users:manage (cuma admin) — kalau kena 403 padahal login admin, login ulang dulu biar permission barunya masuk ke token. {{userId}} keisi otomatis pas Login (cashier), atau isi manual. Balikannya 204."
+          }
+        },
+        {
+          "name": "List users with PIN",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/users/with-pin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "users",
+                "with-pin"
+              ]
+            },
+            "description": "Semua user yang udah punya PIN — buat layar pemilihan kasir. Cukup login (role apa aja). PIN-nya sendiri nggak pernah dibalikin (di-hash bcrypt)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments (Midtrans / Xendit)",
+      "description": "Bayar online lewat gateway. Alurnya: Create payment → customer bayar di paymentUrl → gateway manggil webhook → status jadi paid. Buat ngetes lokal (gateway nggak bisa nembak localhost), pakai request 'Simulate webhook' — signature/token-nya dihitung otomatis. Syarat: server jalan dengan MIDTRANS_SERVER_KEY / XENDIT_SECRET_KEY + XENDIT_CALLBACK_TOKEN keisi, dan variable koleksi midtransServerKey / xenditCallbackToken diisi nilai yang sama.",
+      "item": [
+        {
+          "name": "Create payment (Midtrans)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('paymentId', json.data.id);",
+                  "  pm.collectionVariables.set('paymentExternalRef', json.data.externalRef);",
+                  "  pm.collectionVariables.set('paymentAmount', String(json.data.amount));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Wajib. Kirim ulang pakai nilai sama = replay payment yang sama (nggak bikin tagihan baru)."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"midtrans\",\n  \"items\": [\n    { \"productId\": \"p_kopi\", \"quantity\": 2 }\n  ],\n  \"discount\": { \"type\": \"percentage\", \"value\": 10 }\n}"
+            },
+            "description": "Bikin tagihan Midtrans Snap. Nggak ada field amount — server yang ngitung total (aturan sama kayak checkout). Balikannya paymentUrl (halaman Snap) buat customer. id, externalRef, dan amount otomatis kesimpen ke variable koleksi buat request berikutnya. Butuh MIDTRANS_SERVER_KEY keisi di server; kalau belum, kena 503."
+          }
+        },
+        {
+          "name": "Create payment (Xendit)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('paymentId', json.data.id);",
+                  "  pm.collectionVariables.set('paymentExternalRef', json.data.externalRef);",
+                  "  pm.collectionVariables.set('paymentAmount', String(json.data.amount));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"xendit\",\n  \"items\": [\n    { \"productId\": \"p_teh\", \"quantity\": 3 }\n  ],\n  \"customerEmail\": \"budi@example.com\"\n}"
+            },
+            "description": "Bikin invoice Xendit. Balikannya paymentUrl (halaman invoice) buat customer. Butuh XENDIT_SECRET_KEY + XENDIT_CALLBACK_TOKEN keisi di server; kalau belum, kena 503."
+          }
+        },
+        {
+          "name": "Get payment status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payments/{{paymentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payments",
+                "{{paymentId}}"
+              ]
+            },
+            "description": "Polling status dari layar kasir. pending → paid begitu webhook masuk; transactionId keisi id transaksi (struk) yang dibikin mesin checkout."
+          }
+        },
+        {
+          "name": "Simulate webhook — Midtrans settlement",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const CryptoJS = require('crypto-js');",
+                  "const orderId = pm.collectionVariables.get('paymentExternalRef');",
+                  "const amount = pm.collectionVariables.get('paymentAmount');",
+                  "const serverKey = pm.collectionVariables.get('midtransServerKey');",
+                  "if (!orderId || !amount) throw new Error('Jalanin \"Create payment (Midtrans)\" dulu.');",
+                  "if (!serverKey) throw new Error('Isi variable koleksi midtransServerKey dulu (samain dengan MIDTRANS_SERVER_KEY server).');",
+                  "const gross = amount + '.00';",
+                  "pm.collectionVariables.set('midtransGrossAmount', gross);",
+                  "pm.collectionVariables.set('midtransSignature', CryptoJS.SHA512(orderId + '200' + gross + serverKey).toString());"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payments/webhooks/midtrans",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payments",
+                "webhooks",
+                "midtrans"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_id\": \"{{paymentExternalRef}}\",\n  \"status_code\": \"200\",\n  \"gross_amount\": \"{{midtransGrossAmount}}\",\n  \"signature_key\": \"{{midtransSignature}}\",\n  \"transaction_status\": \"settlement\"\n}"
+            },
+            "description": "Pura-pura jadi Midtrans yang ngabarin pembayaran sukses (settlement). Signature SHA-512 dihitung otomatis di pre-request script dari variable midtransServerKey. Habis ini cek 'Get payment status' — harusnya paid + transactionId keisi, dan stok kepotong. Kirim dua kali? Aman, nggak bikin transaksi dobel."
+          }
+        },
+        {
+          "name": "Simulate webhook — Xendit PAID",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "if (!pm.collectionVariables.get('paymentExternalRef')) throw new Error('Jalanin \"Create payment (Xendit)\" dulu.');",
+                  "if (!pm.collectionVariables.get('xenditCallbackToken')) throw new Error('Isi variable koleksi xenditCallbackToken dulu (samain dengan XENDIT_CALLBACK_TOKEN server).');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-callback-token",
+                "value": "{{xenditCallbackToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payments/webhooks/xendit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payments",
+                "webhooks",
+                "xendit"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"external_id\": \"{{paymentExternalRef}}\",\n  \"status\": \"PAID\",\n  \"paid_amount\": {{paymentAmount}}\n}"
+            },
+            "description": "Pura-pura jadi Xendit yang ngabarin invoice kebayar. Cuma butuh header x-callback-token yang cocok. Habis ini cek 'Get payment status' — harusnya paid + transactionId keisi."
           }
         }
       ]
@@ -572,6 +968,40 @@
               ]
             },
             "description": "Produk yang stoknya <= threshold (default 10). Buat alert restock."
+          }
+        },
+        {
+          "name": "Transactions (paginated)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/reports/transactions?limit=25&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "reports",
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "25"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "Log transaksi lengkap buat tabel dashboard, terbaru duluan (paginasi offset, limit default 25 maks 100). Ada 20 ribu data demo? Coba offset=19000 — tetap kenceng karena paginasinya index-backed. meta: total/limit/offset/hasMore."
           }
         },
         {

@@ -11,6 +11,7 @@ export const PERMISSIONS = {
   PRODUCTS_WRITE: "products:write",
   CHECKOUT_CREATE: "checkout:create",
   REPORTS_READ: "reports:read",
+  USERS_MANAGE: "users:manage",
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -22,6 +23,7 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     PERMISSIONS.PRODUCTS_WRITE,
     PERMISSIONS.CHECKOUT_CREATE,
     PERMISSIONS.REPORTS_READ,
+    PERMISSIONS.USERS_MANAGE,
   ],
   cashier: [PERMISSIONS.PRODUCTS_READ, PERMISSIONS.CHECKOUT_CREATE],
 };

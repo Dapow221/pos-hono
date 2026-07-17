@@ -3,7 +3,8 @@ import { Hono } from "hono";
 import { requirePermission, type AuthEnv } from "../middleware/auth";
 import { reportsCache } from "../middleware/cache";
 import { PERMISSIONS } from "../auth/rbac";
-import { reportRangeSchema } from "../schemas";
+import { reportRangeSchema, transactionFilterSchema } from "../schemas";
+import { parsePagination, pageMeta } from "../pagination";
 import {
   REPORT_TIMEZONE,
   resolveRange,
@@ -13,6 +14,8 @@ import {
   getPaymentMethods,
   getLowStock,
   getRecentTransactions,
+  getTransactionCashiers,
+  getTransactions,
   type ReportRange,
 } from "../services/reports";
 
@@ -70,6 +73,27 @@ route.get("/low-stock", async (c) => {
   const limit = clampLimit(c.req.query("limit"), 100, 100);
   const data = await getLowStock(threshold, limit);
   return c.json({ data, meta: { threshold, count: data.length } });
+});
+
+// GET /v1/reports/transactions?limit&offset&from&to&cashierId&receipt —
+// paginated, filterable transaction log for the dashboard table. Newest first.
+// Filters are optional and combinable; `meta.total` describes the filtered set.
+route.get("/transactions", async (c) => {
+  const query = c.req.query();
+  // Empty params (e.g. a cleared filter input) mean "not filtered", not 400.
+  const present = Object.fromEntries(
+    Object.entries(query).filter(([, value]) => value !== ""),
+  );
+  const filters = transactionFilterSchema.parse(present);
+  const page = parsePagination(query, { defaultLimit: 25 });
+  const { rows, total } = await getTransactions(filters, page.limit, page.offset);
+  return c.json({ data: rows, meta: pageMeta(total, page, rows.length) });
+});
+
+// GET /v1/reports/cashiers — everyone who has rung a sale, for the filter dropdown.
+route.get("/cashiers", async (c) => {
+  const data = await getTransactionCashiers();
+  return c.json({ data, meta: { count: data.length } });
 });
 
 // GET /v1/reports/recent-transactions?limit — latest sales feed (not range-based).

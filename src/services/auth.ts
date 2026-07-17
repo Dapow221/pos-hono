@@ -12,7 +12,15 @@ import { hashPassword, verifyPassword } from "../auth/password";
 import { signAccessToken } from "../auth/jwt";
 import { generateRefreshToken, hashRefreshToken } from "../auth/tokens";
 import { env } from "../env";
-import type { RegisterInput, LoginInput } from "../schemas";
+import type { RegisterInput, LoginInput, PinLoginInput } from "../schemas";
+
+/**
+ * Real bcrypt hash of a random throwaway string — matches no credential, but
+ * keeps failed lookups taking the same time as failed verifies so response
+ * timing leaks nothing. Must be structurally VALID: Bun.password.verify
+ * throws on a malformed hash instead of returning false.
+ */
+const DUMMY_BCRYPT_HASH = "$2b$12$QTWe0Pwr4vLbcTFiMc30heqFJ9Pb1eOpsW2qQKozk.c2Nsggb0ame";
 
 export interface PublicUser {
   id: string;
@@ -91,8 +99,36 @@ export async function login(input: LoginInput): Promise<{ user: PublicUser; toke
   // emails exist via response timing.
   const ok = row
     ? await verifyPassword(input.password, row.password_hash)
-    : await verifyPassword(input.password, "$2b$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidin");
+    : await verifyPassword(input.password, DUMMY_BCRYPT_HASH);
   if (!row || !ok) throw Errors.unauthorized("Invalid email or password.");
+
+  const user: PublicUser = {
+    id: row.id,
+    email: row.email,
+    fullName: row.full_name,
+    role: row.role,
+    permissions: await loadPermissions(row.role),
+  };
+  return { user, tokens: await issueTokens(user) };
+}
+
+/**
+ * PIN login for the cashier-switch screen: pick a user (from /v1/users/with-pin),
+ * type the PIN, get a full token pair — same session semantics as email login.
+ */
+export async function pinLogin(input: PinLoginInput): Promise<{ user: PublicUser; tokens: AuthTokens }> {
+  const { rows } = await pool.query<{
+    id: string;
+    email: string;
+    pin_hash: string | null;
+    full_name: string;
+    role: string;
+  }>(`SELECT id, email, pin_hash, full_name, role FROM users WHERE id = $1`, [input.userId]);
+
+  const row = rows[0];
+  // Same timing-safety trick as login: always verify against SOME hash.
+  const ok = await verifyPassword(input.pin, row?.pin_hash ?? DUMMY_BCRYPT_HASH);
+  if (!row || !row.pin_hash || !ok) throw Errors.unauthorized("Invalid user or PIN.");
 
   const user: PublicUser = {
     id: row.id,

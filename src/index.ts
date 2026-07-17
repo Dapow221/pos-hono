@@ -13,7 +13,9 @@ import { AppError } from "./errors";
 import authRoute from "./routes/auth";
 import productsRoute from "./routes/products";
 import checkoutRoute from "./routes/checkout";
+import paymentsRoute from "./routes/payments";
 import reportsRoute from "./routes/reports";
+import usersRoute from "./routes/users";
 
 const app = new Hono();
 
@@ -26,7 +28,9 @@ app.get("/health", (c) => c.json({ status: "ok" }));
 app.route("/v1/auth", authRoute);
 app.route("/v1/products", productsRoute);
 app.route("/v1/checkout", checkoutRoute);
+app.route("/v1/payments", paymentsRoute);
 app.route("/v1/reports", reportsRoute);
+app.route("/v1/users", usersRoute);
 
 app.onError((err, c) => {
   if (err instanceof AppError) {

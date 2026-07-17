@@ -2,7 +2,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { setCookie, getCookie, deleteCookie } from "hono/cookie";
-import { registerSchema, loginSchema } from "../schemas";
+import { registerSchema, loginSchema, pinLoginSchema } from "../schemas";
 import * as authService from "../services/auth";
 import type { AuthTokens, PublicUser } from "../services/auth";
 import { requireAuth, type AuthEnv } from "../middleware/auth";
@@ -51,6 +51,15 @@ route.post("/register", async (c) => {
 route.post("/login", async (c) => {
   const input = loginSchema.parse(await c.req.json().catch(() => ({})));
   const { user, tokens } = await authService.login(input);
+  setRefreshCookie(c, tokens);
+  return c.json(authBody(user, tokens), 200);
+});
+
+// POST /v1/auth/pin-login — fast cashier switch: userId + PIN → token pair.
+// Inherits the aggressive auth rate limit above, same as password login.
+route.post("/pin-login", async (c) => {
+  const input = pinLoginSchema.parse(await c.req.json().catch(() => ({})));
+  const { user, tokens } = await authService.pinLogin(input);
   setRefreshCookie(c, tokens);
   return c.json(authBody(user, tokens), 200);
 });
