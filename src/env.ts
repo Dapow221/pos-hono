@@ -44,6 +44,11 @@ const envSchema = z.object({
   XENDIT_CALLBACK_TOKEN: z.string().min(1).optional(),
   // How long a gateway payment link/invoice stays payable.
   PAYMENT_EXPIRY_MIN: z.coerce.number().int().positive().max(24 * 60).default(30),
+  // Where the gateway sends the customer's browser after paying (Midtrans
+  // "finish", Xendit success/failure). Without it the gateways fall back to
+  // their example.com placeholder. Sent per-payment, so it overrides any
+  // dashboard-level redirect setting.
+  PAYMENT_REDIRECT_URL: z.string().url().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

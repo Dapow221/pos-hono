@@ -117,6 +117,7 @@ export async function createGatewayPayment(
         ],
         customerEmail: input.customerEmail,
         expiryMinutes: env.PAYMENT_EXPIRY_MIN,
+        finishRedirectUrl: env.PAYMENT_REDIRECT_URL,
       });
       providerRef = snap.token;
       paymentUrl = snap.redirectUrl;
@@ -127,6 +128,7 @@ export async function createGatewayPayment(
         description: `POS sale ${externalRef}`,
         customerEmail: input.customerEmail,
         expiryMinutes: env.PAYMENT_EXPIRY_MIN,
+        redirectUrl: env.PAYMENT_REDIRECT_URL,
       });
       providerRef = invoice.id;
       paymentUrl = invoice.invoiceUrl;

@@ -31,6 +31,8 @@ export async function createInvoice(args: {
   description: string;
   customerEmail?: string;
   expiryMinutes: number;
+  /** Where the invoice page sends the customer after success or failure. */
+  redirectUrl?: string;
 }): Promise<XenditInvoice> {
   const res = await fetch("https://api.xendit.co/v2/invoices", {
     method: "POST",
@@ -45,6 +47,9 @@ export async function createInvoice(args: {
       currency: "IDR",
       invoice_duration: args.expiryMinutes * 60, // Xendit wants seconds
       ...(args.customerEmail ? { payer_email: args.customerEmail } : {}),
+      ...(args.redirectUrl
+        ? { success_redirect_url: args.redirectUrl, failure_redirect_url: args.redirectUrl }
+        : {}),
     }),
   });
 

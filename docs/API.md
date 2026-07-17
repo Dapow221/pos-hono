@@ -305,6 +305,12 @@ MIDTRANS_IS_PRODUCTION=false
 XENDIT_SECRET_KEY=xnd_development_xxxx   # https://dashboard.xendit.co
 XENDIT_CALLBACK_TOKEN=xxxx               # Settings → Webhooks → verification token
 PAYMENT_EXPIRY_MIN=30                    # umur link pembayaran (menit)
+PAYMENT_REDIRECT_URL=https://toko.example/register   # customer diarahkan ke sini
+                                         # setelah bayar (Midtrans finish,
+                                         # Xendit success/failure). Kosong =
+                                         # gateway pakai placeholder example.com.
+                                         # Nilai ini dikirim per-payment, jadi
+                                         # ngalahin setting redirect di dashboard.
 ```
 
 Jangan lupa daftarin URL webhook di dashboard masing-masing:

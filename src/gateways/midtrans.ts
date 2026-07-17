@@ -45,6 +45,8 @@ export async function createSnapTransaction(args: {
   items: SnapItem[];
   customerEmail?: string;
   expiryMinutes: number;
+  /** Overrides the dashboard "Finish URL" — where Snap sends the customer after paying. */
+  finishRedirectUrl?: string;
 }): Promise<SnapCharge> {
   const res = await fetch(`${snapBaseUrl()}/transactions`, {
     method: "POST",
@@ -64,6 +66,7 @@ export async function createSnapTransaction(args: {
         quantity: i.quantity,
       })),
       ...(args.customerEmail ? { customer_details: { email: args.customerEmail } } : {}),
+      ...(args.finishRedirectUrl ? { callbacks: { finish: args.finishRedirectUrl } } : {}),
       expiry: { unit: "minutes", duration: args.expiryMinutes },
     }),
   });
